@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { CellType, Position } from '../engine/types';
+import { bfsShortestPath } from '../engine/pathFinder';
 import {
   analyzeLevel,
   type LevelAnalysis,
@@ -12,11 +13,11 @@ interface UseLevelAnalysisParams {
   start: Position;
   goal: Position;
   stars: Position[];
-  autoUpdate?: boolean;
 }
 
 interface UseLevelAnalysisResult {
   analysis: LevelAnalysis | null;
+  livePath: Position[];
   showPath: boolean;
   showAnalysis: boolean;
   setShowAnalysis: (show: boolean) => void;
@@ -29,52 +30,43 @@ interface UseLevelAnalysisResult {
 export function useLevelAnalysis(
   params: UseLevelAnalysisParams
 ): UseLevelAnalysisResult {
-  const { grid, width, height, start, goal, stars, autoUpdate = true } = params;
+  const { grid, width, height, start, goal, stars } = params;
 
-  const [analysis, setAnalysis] = useState<LevelAnalysis | null>(null);
+  const [manualAnalysis, setManualAnalysis] = useState<LevelAnalysis | null>(null);
   const [showPath, setShowPath] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const prevAnalysisTriggerRef = useRef<string>('');
 
-  const getAnalysisTriggerKey = useCallback(() => {
-    const gridKey = grid.map((row) => row.join(',')).join(';');
-    return `${width}-${height}-${start.x},${start.y}-${goal.x},${goal.y}-${stars.map((s) => `${s.x},${s.y}`).join('|')}-${gridKey}`;
-  }, [grid, width, height, start, goal, stars]);
+  const livePath = useMemo(() => {
+    if (!showPath) return [];
+    const result = bfsShortestPath(grid, width, height, start, goal, true);
+    return result.reachable ? result.path : [];
+  }, [showPath, grid, width, height, start, goal]);
+
+  const analysis = useMemo(() => {
+    if (showAnalysis && manualAnalysis) return manualAnalysis;
+    if (showPath) {
+      return analyzeLevel({ grid, width, height, start, goal, stars });
+    }
+    return manualAnalysis;
+  }, [showAnalysis, manualAnalysis, showPath, grid, width, height, start, goal, stars]);
 
   const runAnalysis = useCallback((): LevelAnalysis => {
     setIsAnalyzing(true);
     const result = analyzeLevel({ grid, width, height, start, goal, stars });
-    setAnalysis(result);
-    prevAnalysisTriggerRef.current = getAnalysisTriggerKey();
+    setManualAnalysis(result);
+    setShowAnalysis(true);
     setTimeout(() => setIsAnalyzing(false), 0);
     return result;
-  }, [grid, width, height, start, goal, stars, getAnalysisTriggerKey]);
+  }, [grid, width, height, start, goal, stars]);
 
   const toggleShowPath = useCallback(() => {
-    setShowPath((prev) => {
-      const next = !prev;
-      if (next) {
-        setTimeout(() => runAnalysis(), 0);
-      }
-      return next;
-    });
-  }, [runAnalysis]);
-
-  useEffect(() => {
-    if (!showPath || !autoUpdate) return;
-
-    const currentKey = getAnalysisTriggerKey();
-    if (currentKey !== prevAnalysisTriggerRef.current) {
-      const timeoutId = setTimeout(() => {
-        runAnalysis();
-      }, 50);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [showPath, autoUpdate, getAnalysisTriggerKey, runAnalysis]);
+    setShowPath((prev) => !prev);
+  }, []);
 
   return {
     analysis,
+    livePath,
     showPath,
     showAnalysis,
     setShowAnalysis,

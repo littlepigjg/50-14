@@ -90,12 +90,12 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
 
   const {
     analysis,
+    livePath,
     showPath,
     showAnalysis,
     setShowAnalysis,
     runAnalysis,
     toggleShowPath,
-    setShowPath,
     isAnalyzing,
   } = useLevelAnalysis({
     grid,
@@ -551,7 +551,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
                     startDirection={startDirection}
                     tool={tool}
                     onCellClick={handleCellClick}
-                    highlightPath={showPath && analysis ? analysis.shortestPathToGoal : []}
+                    highlightPath={livePath}
                     highlightPositions={analysis && showAnalysis
                       ? analysis.warnings.flatMap((w) => w.positions || [])
                       : []}
