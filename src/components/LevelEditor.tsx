@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import type { BlockType, Direction, EditorTool, Level, Position } from '../engine/types';
+import type { BlockType, Direction, EditorTool, Level, Position, CellType } from '../engine/types';
 import { validateLevel } from '../engine/GameEngine';
 import { BLOCK_CONFIGS } from '../engine/blocks';
 import {
@@ -14,8 +14,19 @@ import {
   handleEditorToolClick,
   resizeEditorGrid,
 } from '../engine/gridEditor';
+import {
+  analyzeLevel,
+  applySymmetry,
+  generatePattern,
+  shiftGrid,
+  rotateGrid,
+  type LevelAnalysis,
+  type SymmetryType,
+  type PatternType,
+} from '../engine/levelAnalyzer';
 import { EditorGrid } from './editor/EditorGrid';
 import { EditorToolbar } from './editor/EditorToolbar';
+import { SmartTools } from './editor/SmartTools';
 
 interface LevelEditorProps {
   onBack: () => void;
@@ -65,6 +76,10 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
   const [importText, setImportText] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [hint, setHint] = useState(editLevel?.hint || '');
+  const [showPath, setShowPath] = useState(false);
+  const [analysis, setAnalysis] = useState<LevelAnalysis | null>(null);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [smartTab, setSmartTab] = useState<'tools' | 'analysis'>('tools');
 
   interface ToastItem {
     id: number;
@@ -124,6 +139,118 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     },
     [tool, grid, start, goal, stars, width, height, errors.length, showToast]
   );
+
+  const runAnalysis = useCallback(() => {
+    const result = analyzeLevel({ grid, width, height, start, goal, stars });
+    setAnalysis(result);
+    setShowAnalysis(true);
+    const criticalCount = result.warnings.filter((w) => w.type === 'critical').length;
+    const warningCount = result.warnings.filter((w) => w.type === 'warning').length;
+    if (criticalCount > 0) {
+      showToast(`分析完成：发现 ${criticalCount} 个严重问题`, 'error');
+    } else if (warningCount > 0) {
+      showToast(`分析完成：发现 ${warningCount} 个警告`, 'warning');
+    } else {
+      showToast('分析完成：关卡设计合理！', 'info');
+    }
+  }, [grid, width, height, start, goal, stars, showToast]);
+
+  const toggleShowPath = useCallback(() => {
+    setShowPath((prev) => !prev);
+  }, []);
+
+  const handleApplySymmetry = useCallback(
+    (type: SymmetryType) => {
+      const newGrid = applySymmetry(grid, width, height, type);
+      const labelMap: Record<SymmetryType, string> = {
+        horizontal: '水平对称',
+        vertical: '垂直对称',
+        center: '中心对称',
+        diagonal1: '对角线对称',
+        diagonal2: '反对角线对称',
+      };
+      setGrid(newGrid);
+      showToast(`已应用${labelMap[type]}`, 'info');
+    },
+    [grid, width, height, showToast]
+  );
+
+  const handleApplyPattern = useCallback(
+    (type: PatternType) => {
+      const newGrid = generatePattern(width, height, type, 'wall');
+      const labelMap: Record<PatternType, string> = {
+        border: '边框',
+        checkerboard: '棋盘格',
+        frame: '双框',
+        cross: '十字',
+        diamond: '菱形',
+        spiral: '螺旋',
+      };
+      setGrid(newGrid);
+      setStart({ x: 0, y: 0 });
+      setGoal({ x: width - 1, y: height - 1 });
+      setStars([]);
+      showToast(`已生成${labelMap[type]}图案`, 'info');
+    },
+    [width, height, showToast]
+  );
+
+  const handleRotate = useCallback(
+    (clockwise: boolean) => {
+      const newGrid = rotateGrid(grid, width, height, clockwise);
+      const newWidth = height;
+      const newHeight = width;
+      const newStart = clockwise
+        ? { x: height - 1 - start.y, y: start.x }
+        : { x: start.y, y: width - 1 - start.x };
+      const newGoal = clockwise
+        ? { x: height - 1 - goal.y, y: goal.x }
+        : { x: goal.y, y: width - 1 - goal.x };
+      const newStars = stars.map((s) =>
+        clockwise
+          ? { x: height - 1 - s.y, y: s.x }
+          : { x: s.y, y: width - 1 - s.x }
+      );
+      setGrid(newGrid);
+      setWidth(newWidth);
+      setHeight(newHeight);
+      setStart(clampPosition(newStart, newWidth, newHeight));
+      setGoal(clampPosition(newGoal, newWidth, newHeight));
+      setStars(newStars.filter((s) => s.x < newWidth && s.y < newHeight));
+      showToast(clockwise ? '已顺时针旋转90度' : '已逆时针旋转90度', 'info');
+    },
+    [grid, width, height, start, goal, stars, showToast]
+  );
+
+  const handleShift = useCallback(
+    (dx: number, dy: number) => {
+      const newGrid = shiftGrid(grid, width, height, dx, dy, 'empty');
+      const newStart = { x: start.x + dx, y: start.y + dy };
+      const newGoal = { x: goal.x + dx, y: goal.y + dy };
+      const newStars = stars.map((s) => ({ x: s.x + dx, y: s.y + dy }));
+      setGrid(newGrid);
+      setStart(clampPosition(newStart, width, height));
+      setGoal(clampPosition(newGoal, width, height));
+      setStars(newStars.filter((s) => s.x >= 0 && s.x < width && s.y >= 0 && s.y < height));
+      const dirLabel = dx > 0 ? '右' : dx < 0 ? '左' : dy > 0 ? '下' : '上';
+      showToast(`已向${dirLabel}移一格`, 'info');
+    },
+    [grid, width, height, start, goal, stars, showToast]
+  );
+
+  const handleClearGrid = useCallback(() => {
+    if (!confirm('确定要清空所有墙壁和陷阱吗？')) return;
+    const newGrid = resizeEditorGrid([], 0, 0, width, height);
+    setGrid(newGrid);
+    showToast('已清空地图', 'info');
+  }, [width, height, showToast]);
+
+  useEffect(() => {
+  if (showPath && analysis == null) {
+    const result = analyzeLevel({ grid, width, height, start, goal, stars });
+    setAnalysis(result);
+  }
+}, [showPath, analysis, grid, width, height, start, goal, stars]);
 
   const level: Level = useMemo(
     () => ({
@@ -431,6 +558,122 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
 
                 <EditorToolbar currentTool={tool} onToolChange={setTool} />
 
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-bold text-gray-700">🤖 智能辅助</h4>
+                    <div className="flex gap-1 text-xs">
+                      <button
+                        onClick={() => setSmartTab('tools')}
+                        className={`px-2 py-1 rounded font-medium transition-all ${
+                          smartTab === 'tools'
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        工具
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSmartTab('analysis');
+                          if (!analysis) runAnalysis();
+                        }}
+                        className={`px-2 py-1 rounded font-medium transition-all ${
+                          smartTab === 'analysis'
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        分析
+                      </button>
+                    </div>
+                  </div>
+
+                  {smartTab === 'tools' ? (
+                    <SmartTools
+                      onAnalyze={runAnalysis}
+                      onShowPath={toggleShowPath}
+                      onApplySymmetry={handleApplySymmetry}
+                      onApplyPattern={handleApplyPattern}
+                      onRotate={handleRotate}
+                      onShift={handleShift}
+                      onClear={handleClearGrid}
+                      showPathActive={showPath}
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      {analysis ? (
+                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                          <div className="flex items-center gap-4 text-xs bg-gray-50 rounded-lg p-2">
+                            <div className="flex items-center gap-1">
+                              <span
+                                className={`w-2.5 h-2.5 rounded-full ${
+                                  analysis.hasPathToGoal ? 'bg-green-500' : 'bg-red-500'
+                                }`}
+                              />
+                              <span className="text-gray-600">
+                                可达性：{analysis.hasPathToGoal ? '正常' : '阻塞'}
+                              </span>
+                            </div>
+                            <div className="text-gray-600">
+                              最短距离：<strong>{analysis.goalDistance > 0 ? analysis.goalDistance : '-'}</strong> 步
+                            </div>
+                            <div className="text-gray-600">
+                              区域数：<strong>{analysis.isolatedAreas.length}</strong>
+                            </div>
+                          </div>
+
+                          {analysis.warnings.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {analysis.warnings.map((warning, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`text-xs p-2 rounded-lg flex items-start gap-2 ${
+                                    warning.type === 'critical'
+                                      ? 'bg-red-50 text-red-700 border border-red-200'
+                                      : warning.type === 'warning'
+                                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  }`}
+                                >
+                                  <span>
+                                    {warning.type === 'critical'
+                                      ? '❌'
+                                      : warning.type === 'warning'
+                                      ? '⚠️'
+                                      : '💡'}
+                                  </span>
+                                  <span className="flex-1">{warning.message}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center py-4 text-green-600 bg-green-50 rounded-lg">
+                              ✅ 未发现明显问题
+                            </div>
+                          )}
+
+                          <button
+                            onClick={runAnalysis}
+                            className="w-full text-xs py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
+                          >
+                            🔄 重新分析
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-center py-6 text-gray-400 text-sm">
+                          点击下方按钮开始智能分析
+                          <button
+                            onClick={runAnalysis}
+                            className="mt-3 w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm font-medium"
+                          >
+                            🔍 开始分析
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="my-4">
                   <EditorGrid
                     width={width}
@@ -442,6 +685,11 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
                     startDirection={startDirection}
                     tool={tool}
                     onCellClick={handleCellClick}
+                    highlightPath={showPath && analysis ? analysis.shortestPathToGoal : []}
+                    highlightPositions={analysis && showAnalysis
+                      ? analysis.warnings.flatMap((w) => w.positions || [])
+                      : []}
+                    highlightType="warning"
                   />
                 </div>
 

@@ -12,6 +12,9 @@ interface EditorGridProps {
   startDirection: Direction;
   tool: EditorTool;
   onCellClick: (x: number, y: number) => void;
+  highlightPath?: Position[];
+  highlightPositions?: Position[];
+  highlightType?: 'path' | 'warning' | 'info';
 }
 
 const WallCell: React.FC = () => (
@@ -94,6 +97,9 @@ export const EditorGrid: React.FC<EditorGridProps> = ({
   startDirection,
   tool,
   onCellClick,
+  highlightPath = [],
+  highlightPositions = [],
+  highlightType = 'path',
 }) => {
   const cellSize = useMemo(() => {
     return Math.min(48, Math.floor(500 / Math.max(width, height)));
@@ -104,6 +110,34 @@ export const EditorGrid: React.FC<EditorGridProps> = ({
     stars.forEach((s) => set.add(`${s.x},${s.y}`));
     return set;
   }, [stars]);
+
+  const pathKeys = useMemo(() => {
+    const set = new Set<string>();
+    highlightPath.forEach((p) => set.add(`${p.x},${p.y}`));
+    return set;
+  }, [highlightPath]);
+
+  const highlightKeys = useMemo(() => {
+    const set = new Set<string>();
+    highlightPositions.forEach((p) => set.add(`${p.x},${p.y}`));
+    return set;
+  }, [highlightPositions]);
+
+  const getHighlightStyle = (x: number, y: number): string => {
+    const key = `${x},${y}`;
+    if (pathKeys.has(key)) {
+      return 'bg-green-200/60 ring-2 ring-green-400 ring-inset';
+    }
+    if (highlightKeys.has(key)) {
+      if (highlightType === 'warning') {
+        return 'bg-amber-200/60 ring-2 ring-amber-400 ring-inset animate-pulse';
+      }
+      if (highlightType === 'info') {
+        return 'bg-blue-200/60 ring-2 ring-blue-400 ring-inset';
+      }
+    }
+    return '';
+  };
 
   return (
     <div className="flex justify-center overflow-auto p-4 bg-white rounded-xl border border-gray-200 shadow-inner">
@@ -121,6 +155,8 @@ export const EditorGrid: React.FC<EditorGridProps> = ({
             const isGoal = positionEquals(pos, goal);
             const hasStar = starKeys.has(`${x},${y}`);
 
+            const highlightStyle = getHighlightStyle(x, y);
+
             return (
               <div
                 key={`editor-cell-${x}-${y}`}
@@ -129,6 +165,7 @@ export const EditorGrid: React.FC<EditorGridProps> = ({
                   absolute border border-slate-300/60 cell-hover
                   transition-colors duration-100
                   ${(x + y) % 2 === 0 ? 'bg-slate-50' : 'bg-slate-100'}
+                  ${highlightStyle}
                 `}
                 style={{
                   left: x * cellSize,
